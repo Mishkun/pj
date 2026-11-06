@@ -1,0 +1,5 @@
+#!/bin/sh
+# tk-plugin: Transfer task responsibility through pj's shared mutation boundary
+set -eu
+HERE=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+exec "$HERE/bin/pj" _claim "$@"

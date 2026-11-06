@@ -1,0 +1,63 @@
+{
+  "repository": "https://github.com/wedow/ticket",
+  "revision": "194b71a8bbc3771da1ce9f579395937c976bbddc",
+  "files": [
+    {
+      "path": "ticket",
+      "url": "https://raw.githubusercontent.com/wedow/ticket/194b71a8bbc3771da1ce9f579395937c976bbddc/ticket",
+      "gitBlob": "0aea72c12a73cde45794077cf668b90e089495d7",
+      "sha256": "33c996b0b0b00dd02f4c98cea899d883435797081bb76275c3e85132600e98b5"
+    },
+    {
+      "path": "LICENSE",
+      "url": "https://raw.githubusercontent.com/wedow/ticket/194b71a8bbc3771da1ce9f579395937c976bbddc/LICENSE",
+      "gitBlob": "b77bf2ab726c6e7cb5a81a9d3b7dc38266ebfd3d",
+      "sha256": "06dcddbb6908a0c6dd4a9e8ec822eea41d5a460a53089fecccc8a68049e99241"
+    },
+    {
+      "path": "README.md",
+      "url": "https://raw.githubusercontent.com/wedow/ticket/194b71a8bbc3771da1ce9f579395937c976bbddc/README.md",
+      "gitBlob": "2d7017e5660daa97d46c499de9de388a1d3b48bc",
+      "sha256": "de18780471ea12d08e887fc0db1905db544b3c66a2cd63a1aaab3914d6410979"
+    },
+    {
+      "path": "plugins/README.md",
+      "url": "https://raw.githubusercontent.com/wedow/ticket/194b71a8bbc3771da1ce9f579395937c976bbddc/plugins/README.md",
+      "gitBlob": "136352bff029843e53ff9733c44287a54b4ba56f",
+      "sha256": "dbbcefb44b10b298477890af32750e2c1f254f70db0db5672937a14b5dff3c22"
+    },
+    {
+      "path": "plugins/ticket-ls",
+      "url": "https://raw.githubusercontent.com/wedow/ticket/194b71a8bbc3771da1ce9f579395937c976bbddc/plugins/ticket-ls",
+      "gitBlob": "5bb44b1c71a0babd72e373880321f8d968e428a7",
+      "sha256": "e7eb1e8b10923dc02f8b056897f42ec495f6f0ec8c96cbf0bf6d4ac5b3177656"
+    },
+    {
+      "path": "plugins/ticket-query",
+      "url": "https://raw.githubusercontent.com/wedow/ticket/194b71a8bbc3771da1ce9f579395937c976bbddc/plugins/ticket-query",
+      "gitBlob": "342c1b4f7a3af9809c3b3199906137bbf7663c73",
+      "sha256": "074e1b9a289db5ec7374ab85c89177054ef0b5811b92d601c2f745d6c8a703cf"
+    },
+    {
+      "path": "plugins/ticket-edit",
+      "url": "https://raw.githubusercontent.com/wedow/ticket/194b71a8bbc3771da1ce9f579395937c976bbddc/plugins/ticket-edit",
+      "gitBlob": "c4f32d4287f3cd4a4260774284bd8e1e3f653fa7",
+      "sha256": "2df34d346408f81b73e666db2330ef5f2530aab00bf4bc98ececcbd880fd16ff"
+    },
+    {
+      "path": "plugins/ticket-migrate-beads",
+      "url": "https://raw.githubusercontent.com/wedow/ticket/194b71a8bbc3771da1ce9f579395937c976bbddc/plugins/ticket-migrate-beads",
+      "gitBlob": "c5c8e02d864843e779fdbf67accd13c6852e32e2",
+      "sha256": "5589c5b6feec06241ea412d1889c3f69a466b302ef96b0c84962b744d7ac528b"
+    },
+    {
+      "path": "pkg/extras.txt",
+      "url": "https://raw.githubusercontent.com/wedow/ticket/194b71a8bbc3771da1ce9f579395937c976bbddc/pkg/extras.txt",
+      "gitBlob": "2befebba65dee5c06b2d44695bf8e9626e0ce315",
+      "sha256": "28b8d2eab60bb034d748f663762e11e396be63b6ce75d99d2a15d02b35704ca4"
+    }
+  ],
+  "symlinks": {
+    "plugins/ticket-list": "ticket-ls"
+  }
+}

@@ -1,0 +1,12 @@
+#!/bin/sh
+set -eu
+HERE=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+export PATH="$HERE/bin:$HERE/vendor/ticket/plugins:$PATH"
+# Keep the claim plugin's machine errors parseable when native dispatch would
+# reject a missing ambient directory before reaching any plugin.
+if [ "${1:-}" = --json ]; then shift; set -- "$@" --json; fi
+if [ "${1:-}" = claim ] && [ -n "${TICKETS_DIR:-}" ] && [ ! -d "$TICKETS_DIR" ]; then
+  shift
+  exec "$HERE/bin/tk-claim" "$@"
+fi
+exec /bin/bash "$HERE/vendor/ticket/ticket" "$@"
