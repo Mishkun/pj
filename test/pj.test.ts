@@ -83,6 +83,33 @@ test('session named links round-trip titles and idempotent link does not commit'
   const head = f.git('rev-parse', 'HEAD'); expect(f.invoke(['session', 'link', 'ses_A']).write?.state).toBe('unchanged'); expect(f.git('rev-parse', 'HEAD')).toBe(head);
   expect(f.invoke(['session', 'link', 'ses_A', '--title', 'Updated']).ok).toBe(true);
 });
+test('move keeps YAML and code examples verbatim while updating titled Markdown links', () => {
+  const f = fixture();
+  const content = '---\nstatus: backlog\nopencode_sessions: []\nexample: "[raw](../../shared.md)"\n---\n'
+    + '[Document](../../shared.md "Reference title")\n'
+    + '`[inline example](../../shared.md)`\n'
+    + '```md\n[fenced example](../../shared.md)\n```\n';
+  fs.writeFileSync(f.note, content); f.save('projects/P/README.md');
+  const result = f.invoke(['move', 'projects/Nested/P']);
+  expect(result.ok).toBe(true);
+  const after = fs.readFileSync(path.join(f.root, 'projects/Nested/P/README.md'), 'utf8');
+  expect(after).toContain('example: "[raw](../../shared.md)"');
+  expect(after).toContain('[Document](../../../shared.md "Reference title")');
+  expect(after).toContain('`[inline example](../../shared.md)`');
+  expect(after).toContain('```md\n[fenced example](../../shared.md)\n```');
+});
+test('post-commit cleanup failure retains commit evidence instead of reporting not_written', () => {
+  const f = fixture();
+  f.hook('rm "$PWD/.git/pj.lock"\nmkdir "$PWD/.git/pj.lock"');
+  const previous = f.git('rev-parse', 'HEAD');
+  const result = f.invoke(['log', 'Committed before cleanup failed']);
+  expect(f.git('rev-parse', 'HEAD')).not.toBe(previous);
+  expect(result.ok).toBe(false);
+  expect(result.error?.code).toBe('cleanup_failed');
+  expect(result.write?.state).toBe('unknown');
+  expect(result.write?.commit).toBe(f.git('rev-parse', 'HEAD'));
+  expect(result.write?.paths).toEqual(['projects/P/README.md']);
+});
 test('dirty targets reject unstaged, staged and assume-unchanged edits before write', () => {
   for (const kind of ['unstaged', 'staged', 'assumed']) {
     const f = fixture(); const before = fs.readFileSync(f.note, 'utf8') + '\nUser edit\n';
@@ -267,8 +294,8 @@ test('managed move preserves complete query and fragment suffixes on relative li
 test('managed move rewrites reference definitions and preserves their titles and usages', () => {
   const f = fixture(); fs.writeFileSync(path.join(f.root, 'shared.md'), '# Shared\n');
   const q = path.join(f.root, 'projects/Q'); fs.mkdirSync(q); f.invoke(['init'], q);
-  fs.appendFileSync(f.note, '\n[Shared][plain]\n[Angled][angle]\n[plain]: ../../shared.md?x=1#section "A shared title"\n  [angle]: <../../shared.md#anchor> \'An angled title\'\n');
-  fs.appendFileSync(path.join(q, 'README.md'), '\n[Moved][peer]\n[peer]: ../P/README.md "Keep peer title"\n'); f.save('shared.md', 'projects');
+  fs.appendFileSync(f.note, '\n[Shared][plain]\n[Angled][angle]\n\n[plain]: ../../shared.md?x=1#section "A shared title"\n  [angle]: <../../shared.md#anchor> \'An angled title\'\n');
+  fs.appendFileSync(path.join(q, 'README.md'), '\n[Moved][peer]\n\n[peer]: ../P/README.md "Keep peer title"\n'); f.save('shared.md', 'projects');
   const result = f.invoke(['move', 'projects/deeper/P']); expect(result.ok).toBe(true);
   const moved = fs.readFileSync(path.join(f.root, 'projects/deeper/P/README.md'), 'utf8');
   expect(moved).toContain('[Shared][plain]\n[Angled][angle]');

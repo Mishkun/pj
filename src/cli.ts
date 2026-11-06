@@ -3,6 +3,7 @@ import path from 'node:path';
 import { bytes, fileBytes, mutate, vault, type Envelope, type Plan } from './git.ts';
 import { discover, frontmatter, inConvention, isProject, materials, namedLink, nearest, PJError, projectStatuses, rel, requireValue, safePath, sessions, setField, setSessions, sid, snapshot, taskFile, within } from './model.ts';
 import { planTask } from './tasks.ts';
+import { rewriteMarkdownLinks } from './markdown.ts';
 
 const usage = 'pj init [--adopt] | show | list [--session SID] | context | session link/unlink SID [--title TITLE] | session fork SOURCE TARGET [--title TITLE] | status VALUE | tk OP ... | log TEXT [--session SID] | move DESTINATION';
 const taskReadOperations = new Set(['list', 'ls', 'show', 'ready', 'blocked', 'closed', 'query']);
@@ -55,12 +56,9 @@ function movePlan(root: string, project: string, destination: string): Plan {
       const newTarget = mapLocation(previousTarget);
       if (nextFile === file && newTarget === previousTarget) return href;
       const relative = rel(path.dirname(nextFile), newTarget) || '.';
-      return relative.split('/').map(encodeURIComponent).join('/') + suffix;
+      return relative.split('/').map(segment => encodeURIComponent(segment).replace(/[!'()*]/g, character => `%${character.charCodeAt(0).toString(16).toUpperCase()}`)).join('/') + suffix;
     };
-    const next = original
-      .replace(/(!?\[[^\]\n]*\]\()([^\s)]+)(\))/g, (_full, prefix: string, href: string, suffix: string) => `${prefix}${rewriteHref(href)}${suffix}`)
-      // Replace only the definition destination; retain labels, whitespace and optional titles verbatim.
-      .replace(/^( {0,3}\[(?:\\.|[^\]\\\r\n])+\]:[\t ]*)(?:<([^>\r\n]*)>|([^\s<>]+))/gm, (_full, prefix: string, angled: string | undefined, bare: string | undefined) => `${prefix}${angled === undefined ? rewriteHref(bare!) : `<${rewriteHref(angled)}>`}`);
+    const next = rewriteMarkdownLinks(original, rewriteHref);
     if (next !== original) files.set(nextFile, bytes(next));
     if (original.includes(rel(root, project))) freeTextReferences.push({ path: rel(root, file), reference: rel(root, project) });
   }

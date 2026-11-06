@@ -101,6 +101,8 @@ Discovery is bounded to the two convention directories and skips symlinks and te
 
 Write states are `committed`, `not_written`, `saved_uncommitted`, `unchanged` and `unknown`. Responses include completed checks; verification errors additionally include check errors. A failed commit returns `commit_failed`, `saved_uncommitted`, saved paths and `commit:null`. An unexpected HEAD/tree/index/hook outcome returns `unknown` with `commit:null`. Inspect Git and saved files explicitly before deciding a recovery action.
 
+Post-write cleanup failures return `cleanup_failed` and `unknown`, retaining saved paths and any already verified commit. The response includes cleanup errors so a retained lock can be inspected explicitly. Cleanup errors never turn a completed write into `not_written`.
+
 Consumers, including plugins, invoke the CLI for project links. Library exports in `src/index.ts` provide types and a programmatic runner for local tests; README parsing stays owned by pj.
 
 ## Git write boundary
@@ -116,7 +118,7 @@ Each managed mutation:
 
 Hooks and Git filters are trusted repository code. Hooks can perform arbitrary external actions; pj detects unexpected committed trees/ref changes and reports an unknown result. Writers that bypass pj remain outside its serialization guarantee. The implementation performs no push, automatic retry or rollback. A crash can leave a lock; inspect the process and Git state before explicitly removing a stale lock. Signing and hooks retain the repository's normal behavior, within a 30-second timeout per Git subprocess.
 
-Moves preserve the complete branch, nested projects, task files, binary materials and file modes. Markdown inline relative links and reference definitions in project notes, task notes and moved Markdown files are updated for their new locations, retaining query/fragment suffixes and definition titles. Matching free-text paths are reported in `data.freeTextReferences`. HTML links, wiki links and embedded application-specific path formats require explicit inspection.
+Moves preserve the complete branch, nested projects, task files, binary materials and file modes. A CommonMark parser identifies link destination spans in project notes, task notes and moved Markdown files. Relative link destinations and reference definitions are updated for their new locations, retaining titles and query/fragment suffixes. Frontmatter, code examples and surrounding formatting remain byte-identical. Matching free-text paths are reported in `data.freeTextReferences`. HTML links, wiki links and embedded application-specific path formats require explicit inspection.
 
 ## Pinned tk and provenance
 

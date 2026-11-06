@@ -151,8 +151,19 @@ export function mutate(root: string, project: string | null, description: string
     if (write.state === 'saved_uncommitted' && error instanceof PJError && error.code !== 'commit_failed') write.checkErrors = [error.message];
     return errorEnvelope(project, write, error, data);
   } finally {
-    if (indexOwned && indexLock) fs.unlinkSync(indexLock);
-    if (repoOwned && lock) fs.unlinkSync(lock);
-    if (scratch) fs.rmSync(scratch, { recursive: true, force: true });
+    const cleanupErrors: string[] = [];
+    const cleanup = (action: () => void) => {
+      try { action(); } catch (error) { cleanupErrors.push(error instanceof Error ? error.message : String(error)); }
+    };
+    if (indexOwned && indexLock) cleanup(() => fs.unlinkSync(indexLock!));
+    if (repoOwned && lock) cleanup(() => fs.unlinkSync(lock!));
+    if (scratch) cleanup(() => fs.rmSync(scratch!, { recursive: true, force: true }));
+    // Cleanup is after the write/commit boundary. Never let it escape to the
+    // CLI's pre-write error handler and erase confirmed commit or path evidence.
+    if (cleanupErrors.length) return errorEnvelope(project, {
+      ...write,
+      state: attemptedSave ? 'unknown' : 'not_written',
+      checkErrors: [...(write.checkErrors ?? []), ...cleanupErrors],
+    }, new PJError('cleanup_failed', 'Cleanup failed; inspect retained lock paths and commit evidence before another mutation', { cleanupErrors }), data);
   }
 }
