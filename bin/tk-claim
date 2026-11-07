@@ -1,5 +1,11 @@
 #!/bin/sh
 # tk-plugin: Transfer task responsibility through pj's shared mutation boundary
 set -eu
-HERE=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+SCRIPT=$0
+while [ -L "$SCRIPT" ]; do
+  BASE=$(CDPATH= cd -- "$(dirname -- "$SCRIPT")" && pwd)
+  TARGET=$(readlink "$SCRIPT")
+  case "$TARGET" in /*) SCRIPT=$TARGET ;; *) SCRIPT=$BASE/$TARGET ;; esac
+done
+HERE=$(CDPATH= cd -- "$(dirname -- "$SCRIPT")/.." && pwd)
 exec "$HERE/bin/pj" _claim "$@"

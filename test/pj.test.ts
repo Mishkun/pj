@@ -36,6 +36,27 @@ function fixture(unborn = false) {
   return { root, project, git, invoke, note, save, cli, task, hook };
 }
 
+test('installed entrypoints resolve relative and absolute symlink chains', () => {
+  const f = fixture();
+  fs.mkdirSync(path.join(f.root, 'links'));
+  fs.mkdirSync(path.join(f.root, 'installed'));
+  for (const name of ['pj', 'tk', 'tk-claim']) {
+    fs.symlinkSync(path.join(repo, 'bin', name), path.join(f.root, 'links', name));
+    fs.symlinkSync(`../links/${name}`, path.join(f.root, 'installed', name));
+  }
+  expect(f.invoke(['session', 'link', 'ses_Installed']).ok).toBe(true);
+  const task = f.task();
+  for (const [name, args] of [
+    ['pj', ['show', '--json']],
+    ['tk-claim', [task, 'ses_Installed', '--json']],
+    ['tk', ['claim', task, 'ses_Installed', '--json']],
+  ] as const) {
+    const result = spawnSync(path.join(f.root, 'installed', name), [...args], { cwd: f.project, encoding: 'utf8', timeout: 20000 });
+    expect(result.status).toBe(0);
+    expect(JSON.parse(result.stdout).ok).toBe(true);
+  }
+});
+
 test('new Git-vault supports first unborn commit and JSON flags anywhere', () => {
   const f = fixture(true);
   expect(f.git('rev-list', '--count', 'HEAD')).toBe('1');

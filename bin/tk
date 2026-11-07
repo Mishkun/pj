@@ -1,6 +1,12 @@
 #!/bin/sh
 set -eu
-HERE=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+SCRIPT=$0
+while [ -L "$SCRIPT" ]; do
+  BASE=$(CDPATH= cd -- "$(dirname -- "$SCRIPT")" && pwd)
+  TARGET=$(readlink "$SCRIPT")
+  case "$TARGET" in /*) SCRIPT=$TARGET ;; *) SCRIPT=$BASE/$TARGET ;; esac
+done
+HERE=$(CDPATH= cd -- "$(dirname -- "$SCRIPT")/.." && pwd)
 export PATH="$HERE/bin:$HERE/vendor/ticket/plugins:$PATH"
 # Keep the claim plugin's machine errors parseable when native dispatch would
 # reject a missing ambient directory before reaching any plugin.
