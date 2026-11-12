@@ -7,8 +7,12 @@ import { frontmatter, requireValue, safePath, snapshot, taskFile } from './model
 
 export const ticketScript = fileURLToPath(new URL('../vendor/ticket/ticket', import.meta.url));
 /** Execute the authentic pinned built-ins in an isolated planning directory, never through ambient plugins. */
-export function planTask(root: string, project: string, scratch: string, operation: string, args: string[]): Plan {
+export function planTask(root: string, project: string, scratch: string, operation: string, args: string[], closeResult?: string): Plan {
   const before = snapshot(root, project);
+  if (operation === 'close' && closeResult !== undefined) {
+    taskFile(root, project, args[0]!);
+    requireValue(before.tasks.find(task => task.id === args[0])!.status !== 'closed', 'already_closed', 'Task is already closed; result was not appended');
+  }
   const working = path.join(scratch, path.basename(project));
   const tickets = path.join(working, '.tickets'); fs.mkdirSync(tickets, { recursive: true });
   for (const task of before.tasks) {
@@ -25,8 +29,20 @@ export function planTask(root: string, project: string, scratch: string, operati
       i++;
     }
   }
-  const result = spawnSync('/bin/bash', [ticketScript, 'super', operation, ...args], { cwd: working, env: cleanEnv({ TICKETS_DIR: tickets, TK_SCRIPT: ticketScript }), encoding: 'utf8', timeout: 15000 });
-  requireValue(!result.error && result.status === 0, 'tk_failed', result.error?.message ?? (result.stderr.trim() || `tk ${operation} failed (${result.status})`));
+  const native = (op: string, values: string[]) => {
+    const result = spawnSync('/bin/bash', [ticketScript, 'super', op, ...values], { cwd: working, env: cleanEnv({ TICKETS_DIR: tickets, TK_SCRIPT: ticketScript }), encoding: 'utf8', timeout: 15000 });
+    requireValue(!result.error && result.status === 0, 'tk_failed', result.error?.message ?? (result.stderr.trim() || `tk ${op} failed (${result.status})`));
+    return result;
+  };
+  let appendedBody: string | undefined;
+  if (operation === 'close' && closeResult !== undefined) {
+    const file = path.join(tickets, `${args[0]}.md`), prefix = fs.readFileSync(file);
+    native('add-note', [args[0]!, closeResult]);
+    const appended = fs.readFileSync(file);
+    requireValue(appended.length > prefix.length && appended.subarray(0, prefix.length).equals(prefix), 'verification_failed', 'Task result must append to existing bytes and preserve them as prefix');
+    appendedBody = frontmatter(appended.toString()).body;
+  }
+  const result = native(operation, args);
   const files = new Map<string, Buffer | null>();
   let taskId = operation === 'create' ? result.stdout.trim() : args[0]!;
   if (operation === 'create') requireValue(!before.tasks.some(task => task.id === taskId), 'task_collision', 'Generated task ID already exists');
@@ -36,7 +52,7 @@ export function planTask(root: string, project: string, scratch: string, operati
     const next = fs.readFileSync(path.join(tickets, entry));
     const old = fs.existsSync(file) ? fs.readFileSync(file) : null;
     if (!old || !old.equals(next)) {
-      if (old && operation !== 'add-note') requireValue(frontmatter(old.toString()).body === frontmatter(next.toString()).body, 'verification_failed', 'Native tk changed task prose; original file remains intact');
+      if (old && operation !== 'add-note') requireValue((appendedBody !== undefined && entry === `${args[0]}.md` ? appendedBody : frontmatter(old.toString()).body) === frontmatter(next.toString()).body, 'verification_failed', 'Native tk changed task prose; original file remains intact');
       if (old && operation === 'add-note') requireValue(next.subarray(0, old.length).equals(old), 'verification_failed', 'Task note must preserve existing bytes as prefix');
       files.set(file, next);
     }

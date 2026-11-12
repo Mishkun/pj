@@ -1,23 +1,30 @@
 ---
 title: pj — file-based project workspaces
 status: experimental
-updated: 2026-11-06
+updated: 2026-11-12
 ---
 
 # pj
 
 Project and task CLI for a Git-vault. Project records live in `projects/` and `.archived/`. A project is a folder whose `README.md` frontmatter contains `status` and `opencode_sessions`. Its path relative to the Git root is its address. Nested folders derive their project parent from the nearest project ancestor.
 
-## Run locally
+Use the companion [OpenCode plugin](https://github.com/Mishkun/opencode-pj-tk-plugin) to browse projects, tasks and related sessions in the terminal sidebar.
+
+## Install from GitHub
 
 Requires Node **22.23+**, Git, Bash and standard Unix tools. Bun is a project-local development dependency. The CLI runs through Node and needs no global Bun installation.
 
 ```sh
-cd /Users/themishkun/projects/pj
+git clone https://github.com/Mishkun/pj.git
+cd pj
 npm ci
-export PATH="/Users/themishkun/projects/pj/bin:$PATH"
+export PATH="$PWD/bin:$PATH"
 pj --help
 ```
+
+Add the absolute path to this checkout's `bin` directory to your shell's PATH for future sessions. Keep the checkout and its installed dependencies together.
+
+## Use in a Git repository
 
 Run project commands inside the target project or its materials directory. Run `list` and `session fork` anywhere inside the Git-vault, including its root. There is no project selector or root configuration file.
 
@@ -31,8 +38,8 @@ pj tk create 'Verify payment' --description 'Keep ordinary Markdown here.' --jso
 pj show --json
 tk claim pay-ab12 ses_A --json
 pj tk start pay-ab12 --json
-pj tk close pay-ab12 --json
-pj tk add-note pay-ab12 'Verification passed.' --json
+pj tk close pay-ab12 --result 'Verification passed.' --json
+pj tk add-note pay-ab12 'Additional evidence.' --json
 pj log 'Payment verification complete.' --session ses_A --json
 ```
 
@@ -45,7 +52,9 @@ Task IDs in the example are illustrative; `pj tk create` returns `data.taskId` a
 | `pj init [--status backlog]` | Create README and `.tickets/.gitkeep` in the current folder |
 | `pj init --adopt` | Explicitly add project metadata to an existing **clean, tracked** README |
 | `pj show` | Current normalized project snapshot |
-| `pj list [--session SID]` | Active and archived project snapshots, including nested projects |
+| `pj list [--session SID] [--archived]` | Compact non-archived projects by default; `--archived` includes both trees |
+| `pj list -a` / `pj list --all` | All snapshot fields, including task bodies; archive inclusion still requires `--archived` |
+| `pj list --fields FIELD,...` | Explicit projection using the fields listed below |
 | `pj context` | Project snapshot, complete README text, material inventory |
 | `pj status VALUE` | Set `backlog`, `in-progress`, `waiting`, `blocked` or `done` |
 | `pj session link SID [--title TITLE]` | Create or refresh a named project relationship |
@@ -57,7 +66,9 @@ Task IDs in the example are illustrative; `pj tk create` returns `data.taskId` a
 | `pj tk dep/undep/link/unlink …` | Manage same-project task dependencies and links |
 | `pj tk list/ls/query/ready/blocked/closed` | Normalized task reads; these take no extra arguments |
 | `pj tk show EXACT_ID` | One normalized task |
-| `tk claim EXACT_ID SID` | Native tk plugin dispatch into the same pj write boundary |
+| `pj tk claim EXACT_ID SID [--force]` | Claim for a linked session; explicit `--force` permits reassignment |
+| `tk claim EXACT_ID SID [--force]` | Native tk plugin dispatch into the same pj write boundary |
+| `pj tk close EXACT_ID [--result TEXT]` | Append a nonempty result and close in one managed commit |
 
 All `pj` output and claim-plugin output is a JSON envelope. `--json` is accepted before or after the command. Errors use nonzero exit status and JSON on stdout; concise diagnostics go to stderr. `pj tk add-note` requires explicit note text. Native raw tk commands remain available through `bin/tk`; raw tk mutations have their upstream behavior and sit outside pj's commit guarantees. Use `pj tk` for managed mutations.
 
@@ -75,7 +86,11 @@ Project context and [materials](docs/spec.md).
 
 Unknown frontmatter fields and ordinary Markdown survive managed edits. State-setting calls return `unchanged` when the requested state already holds. Log calls always append, including repeated text. A project log preserves all prior bytes as a prefix and uses the exact native tk add-note timestamp/Notes layout. An explicit `--session` adds attribution; it creates no membership.
 
-Tasks are native tk `.tickets/<id>.md` files. The extra inline field `claimed_by_sessions: [ses_A]` records responsibility. Reads expose all stored assignments. Claim replaces that field with the one explicitly supplied, linked SID, retaining task status, unknown metadata and prose. Parent/dependency/link IDs are local to the project. A task is ready when it is open or in progress and every dependency exists and is closed. Closing a blocker leaves a dependent task's status intact. Markdown checklists are ordinary task text.
+Tasks are native tk `.tickets/<id>.md` files. The extra inline field `claimed_by_sessions: [ses_A]` records responsibility. Reads expose all stored assignments. Claim requires a linked SID. The same sole owner returns `unchanged`. Any other owner or multiple stored owners returns `claim_conflict` with `error.owners`, `error.requested` and `write.state: not_written`. Explicit `--force` replaces the owners with the supplied SID. Claim retains task status, unknown metadata and prose.
+
+`pj tk close ID --result TEXT` appends a timestamped native task note and closes the task in one planning directory and one managed commit. Existing task bytes remain the prefix during note append; the close step preserves the appended prose. A failed append leaves the real task unchanged. An already closed task returns `already_closed` with no duplicate result. Bare close retains its existing idempotence. Standalone `add-note` accepts additional notes on closed tasks. Project status remains an explicit operation.
+
+Parent/dependency/link IDs are local to the project. A task is ready when it is open or in progress and every dependency exists and is closed. Closing a blocker leaves a dependent task's status intact. Markdown checklists are ordinary task text.
 
 Discovery is bounded to the two convention directories and skips symlinks and technical directories, including `.git`, `.tickets`, `node_modules` and `.opencode`. Material inventories skip nested project branches. Paths in snapshots and material records are vault-relative. Reads require native filesystem permissions and create no state. Explicit write targets reject symlinks and hard links.
 
@@ -91,7 +106,9 @@ Discovery is bounded to the two convention directories and skips symlinks and te
 }
 ```
 
-- List: `data.projects: ProjectSnapshot[]`.
+- List: `data.projects` contains compact records by default: `path`, `name`, `parent`, `status`, `taskCounts: {open,in_progress,closed,ready}`. Counts use task status and readiness; a ready in-progress task contributes to both counts.
+- List `-a` / `--all`: every `ProjectSnapshot` field, including task bodies, plus the same computed `taskCounts`. This changes fields only. Add `--archived` to include `.archived/`; otherwise discovery reads `projects/` only. `--session SID` filters within the selected trees.
+- List `--fields`: comma-separated names from `path,name,parent,status,taskCounts,sessions,notePath,tasks`. Selected `tasks` contain every task field except `body`. Empty, unknown or duplicate fields and `-a` / `--all` together with `--fields` return a usage error.
 - Show: `data.project: ProjectSnapshot`.
 - Context: `data.project`, `data.note: string`, `data.materials: {path,size}[]`.
 - Writes additionally return saved state projections where applicable. Task writes include `data.task`.
@@ -138,3 +155,7 @@ node acceptance/manager-scenario.mjs /path/to/temporary-evidence-directory
 Tests create isolated temporary Git-vaults and execute real Git, native hooks, the pinned native task script, actual claim dispatcher and Node CLI wrappers. Coverage includes foreign staging/flags/conflicts, dirty targets, unborn HEAD, held locks, concurrent cooperating writers, worktrees, commit/verification failures, hook-expanded trees, read permissions, symlink escapes, nested projects, fork, dependencies, task prose, append-only logs and moves.
 
 The independent acceptance script is maintained separately from the core implementation. Native OpenCode navigation, running-session behavior, sidebar display, session archiving and profile restart acceptance belong to the host integration. Production installation and existing-vault migration require their own explicit cutover.
+
+## License
+
+[MIT](LICENSE). The vendored [wedow/ticket](https://github.com/wedow/ticket) code retains its [upstream MIT license](vendor/ticket/LICENSE).

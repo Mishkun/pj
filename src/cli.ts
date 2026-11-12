@@ -1,11 +1,23 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { bytes, fileBytes, mutate, vault, type Envelope, type Plan } from './git.ts';
-import { discover, frontmatter, inConvention, isProject, materials, namedLink, nearest, PJError, projectStatuses, rel, requireValue, safePath, sessions, setField, setSessions, sid, snapshot, taskFile, within } from './model.ts';
+import { discover, frontmatter, inConvention, isProject, materials, namedLink, nearest, PJError, projectStatuses, rel, requireValue, safePath, sessions, setField, setSessions, sid, snapshot, taskFile, within, type ProjectSnapshot } from './model.ts';
 import { planTask } from './tasks.ts';
 import { rewriteMarkdownLinks } from './markdown.ts';
 
-const usage = 'pj init [--adopt] | show | list [--session SID] | context | session link/unlink SID [--title TITLE] | session fork SOURCE TARGET [--title TITLE] | status VALUE | tk OP ... | log TEXT [--session SID] | move DESTINATION';
+const listUsage = 'pj list [--session SID] [--archived] [-a | --all | --fields FIELD,...]';
+const usage = `pj init [--adopt] | show | ${listUsage.slice(3)} | context | session link/unlink SID [--title TITLE] | session fork SOURCE TARGET [--title TITLE] | status VALUE | tk claim TASK_ID SESSION_ID [--force] | tk close TASK_ID [--result TEXT] | tk OP ... | log TEXT [--session SID] | move DESTINATION`;
+const listFields = ['path', 'name', 'parent', 'status', 'taskCounts', 'sessions', 'notePath', 'tasks'] as const;
+type ListField = typeof listFields[number];
+function taskCounts(project: ProjectSnapshot) {
+  const counts = { open: 0, in_progress: 0, closed: 0, ready: 0 };
+  for (const task of project.tasks) { counts[task.status as 'open' | 'in_progress' | 'closed']++; if (task.ready) counts.ready++; }
+  return counts;
+}
+function projectListRecord(project: ProjectSnapshot, fields: ListField[]): Record<string, unknown> {
+  const values = { ...project, taskCounts: taskCounts(project), tasks: project.tasks.map(({ body, ...task }) => task) };
+  return Object.fromEntries(fields.map(field => [field, values[field]]));
+}
 const taskReadOperations = new Set(['list', 'ls', 'show', 'ready', 'blocked', 'closed', 'query']);
 function isTaskReadOperation(operation: string | undefined): boolean { return taskReadOperations.has(operation ?? ''); }
 function flag(args: string[], name: string): string | undefined {
@@ -76,9 +88,14 @@ export function run(argv: string[], cwd = process.cwd()): Envelope {
     const root = vault(cwd); safePath(root, cwd);
     const success = (data: Record<string, unknown>): Envelope => ({ version: 1, ok: true, project, data });
     if (command === 'list') {
-      const filter = flag(args, '--session'); if (filter) sid(filter);
-      requireValue(args.length === 0, 'usage', usage);
-      return success({ projects: discover(root).filter(p => !filter || p.sessions.some(s => s.id === filter)) });
+      const filter = flag(args, '--session'); if (filter !== undefined) sid(filter);
+      const archived = booleanFlag(args, '--archived'), all = booleanFlag(args, '-a') || booleanFlag(args, '--all');
+      const selected = flag(args, '--fields');
+      requireValue(args.length === 0 && !(all && selected !== undefined), 'usage', listUsage);
+      const fields = selected === undefined ? ['path', 'name', 'parent', 'status', 'taskCounts'] : selected.split(',');
+      requireValue(fields.every(field => listFields.includes(field as ListField)) && new Set(fields).size === fields.length, 'usage', `List fields must be distinct, nonempty names from: ${listFields.join(',')}`);
+      const projects = discover(root, archived).filter(p => filter === undefined || p.sessions.some(s => s.id === filter));
+      return success({ projects: all ? projects.map(p => ({ ...p, taskCounts: taskCounts(p) })) : projects.map(p => projectListRecord(p, fields as ListField[])) });
     }
     if (command === 'session' && args[0] === 'fork') {
       isMutation = true; args.shift(); const title = flag(args, '--title');
@@ -175,20 +192,25 @@ export function run(argv: string[], cwd = process.cwd()): Envelope {
       }
       isMutation = true;
       if (operation === 'claim') {
-        requireValue(args.length === 2, 'usage', 'tk claim TASK_ID SESSION_ID'); const id = sid(args[1]);
+        const force = booleanFlag(args, '--force');
+        requireValue(args.length === 2, 'usage', 'tk claim TASK_ID SESSION_ID [--force]'); const id = sid(args[1]);
         return mutate(root, project, `pj: claim ${args[0]} ${id}`, () => {
           const record = snapshot(root, current);
           requireValue(record.sessions.some(s => s.id === id), 'session_not_linked', `Link the session explicitly first: pj session link ${id}`);
           const file = taskFile(root, current, args[0]!);
+          const owners = record.tasks.find(task => task.id === args[0])!.claimed_by_sessions;
+          if (!force && owners.length && !(owners.length === 1 && owners[0] === id)) throw new PJError('claim_conflict', `Task is claimed by ${owners.join(', ')}; use --force for an explicit reassignment to ${id}`, { owners, requested: id });
           return { files: new Map([[file, bytes(setField(fs.readFileSync(file, 'utf8'), 'claimed_by_sessions', `[${id}]`))]]), after: () => { const p = snapshot(root, current); return { project: p, task: p.tasks.find(t => t.id === args[0]) }; } };
         });
       }
       requireValue(operation && ['create', 'start', 'close', 'reopen', 'status', 'add-note', 'dep', 'undep', 'link', 'unlink'].includes(operation), 'unsupported_operation', 'Allowed tk operations: create/start/close/reopen/status/add-note/dep/undep/link/unlink and normalized reads');
+      const result = operation === 'close' ? flag(args, '--result') : undefined;
+      if (result !== undefined) requireValue(result.trim().length > 0, 'usage', 'close --result requires nonempty text');
       requireValue(operation === 'create' || args.length >= 1, 'usage', 'Task ID required');
       if (['start', 'close', 'reopen'].includes(operation)) requireValue(args.length === 1, 'usage', `${operation} takes exactly one task ID`);
       if (['dep', 'undep', 'unlink', 'status', 'add-note'].includes(operation)) requireValue(args.length === 2, 'usage', `${operation} takes two arguments`);
       if (operation === 'link') requireValue(args.length >= 2, 'usage', 'link takes at least two task IDs');
-      return mutate(root, project, `pj: tk ${operation} ${project}`, scratch => planTask(root, current, scratch, operation, args));
+      return mutate(root, project, `pj: tk ${operation} ${project}`, scratch => planTask(root, current, scratch, operation, args, result));
     }
     throw new PJError('usage', usage);
   } catch (error) {

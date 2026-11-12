@@ -2,6 +2,10 @@
   "name": "pj-workspaces",
   "version": "0.1.0",
   "private": true,
+  "description": "File-based project workspaces and durable tasks for Git repositories",
+  "license": "MIT",
+  "repository": { "type": "git", "url": "git+https://github.com/Mishkun/pj.git" },
+  "engines": { "node": ">=22.23.0" },
   "type": "module",
   "bin": {
     "pj": "bin/pj",

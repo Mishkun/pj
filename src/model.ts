@@ -105,7 +105,7 @@ export function nearest(root: string, cwd: string): string {
   }
   throw new PJError('scope', 'Run this command inside a project under projects/ or .archived/');
 }
-export function discover(root: string): ProjectSnapshot[] {
+export function discover(root: string, includeArchived = true): ProjectSnapshot[] {
   const result: ProjectSnapshot[] = [];
   const walk = (directory: string, parent: string | null) => {
     safePath(root, directory);
@@ -120,7 +120,7 @@ export function discover(root: string): ProjectSnapshot[] {
       if (entry.isDirectory() && !excluded.has(entry.name)) walk(path.join(directory, entry.name), current);
     }
   };
-  for (const name of ['projects', '.archived']) {
+  for (const name of includeArchived ? ['projects', '.archived'] : ['projects']) {
     const directory = path.join(root, name);
     if (fs.existsSync(directory) && !fs.lstatSync(directory).isSymbolicLink()) { safePath(root, directory); walk(directory, null); }
   }

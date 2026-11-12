@@ -1,4 +1,5 @@
-import { afterEach, expect, test } from 'bun:test';
+import { afterEach, expect, spyOn, test } from 'bun:test';
+import * as childProcess from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -70,7 +71,7 @@ test('nested projects, duplicate basenames, archived status and bounded read-onl
   }
   fs.mkdirSync(path.join(f.project, 'docs')); fs.writeFileSync(path.join(f.project, 'docs/spec.md'), 'spec'); f.save('projects/P/docs/spec.md');
   const before = f.git('status', '--porcelain=v1'); const head = f.git('rev-parse', 'HEAD');
-  const all = f.invoke(['list'], f.root).data.projects as any[]; expect(all).toHaveLength(4);
+  const all = f.invoke(['list', '-a', '--archived'], f.root).data.projects as any[]; expect(all).toHaveLength(4);
   expect(all.find(p => p.path === 'projects/P/Child').parent).toBe('projects/P');
   expect(all.find(p => p.path === '.archived/Child').status).toBe('backlog');
   expect(f.invoke(['context'], path.join(f.project, 'docs')).data.materials).toEqual([{ path: 'projects/P/docs/spec.md', size: 4 }]);
@@ -207,7 +208,7 @@ test('actual tk dispatcher claims only linked sessions and unlink rejects curren
   f.invoke(['session', 'link', 'ses_A']); f.invoke(['session', 'link', 'ses_B']);
   const file = path.join(f.project, '.tickets', `${id}.md`); const prose = frontmatter(fs.readFileSync(file, 'utf8')).body;
   expect(f.cli(['claim', id, 'ses_A', '--json'], f.project, {}, 'tk').value.ok).toBe(true);
-  expect(f.cli(['claim', id, 'ses_B', '--json'], f.project, {}, 'tk').value.ok).toBe(true);
+  expect(f.cli(['claim', id, 'ses_B', '--force', '--json'], f.project, {}, 'tk').value.ok).toBe(true);
   expect((f.invoke(['show']).data.project as any).tasks[0]).toMatchObject({ status: 'open', claimed_by_sessions: ['ses_B'] });
   expect(frontmatter(fs.readFileSync(file, 'utf8')).body).toBe(prose);
   expect(f.invoke(['session', 'unlink', 'ses_B']).error?.code).toBe('session_assigned'); expect(f.invoke(['session', 'unlink', 'ses_A']).ok).toBe(true);
@@ -332,4 +333,110 @@ test('context skips a descendant README symlink before reading external invalid 
   const result = f.cli(['context', '--json']); expect(result.code).toBe(0); expect(result.value.ok).toBe(true);
   expect(result.value.data.materials).toEqual([{ path: 'projects/P/docs/guide.md', size: 16 }]);
   expect(f.git('rev-parse', 'HEAD')).toBe(head); expect(f.git('status', '--porcelain=v1')).toBe(before);
+});
+
+test('list defaults to compact active records, with explicit full, archived, session and field projections', () => {
+  const f = fixture(); const archived = path.join(f.root, '.archived/P'); fs.mkdirSync(archived, { recursive: true }); f.invoke(['init'], archived);
+  for (const cwd of [f.project, archived]) expect(f.invoke(['session', 'link', 'ses_A'], cwd).ok).toBe(true);
+  const a = f.task('Open'), b = f.task('Working'), c = f.task('Closed'), d = f.task('Blocked');
+  f.invoke(['tk', 'start', b]); f.invoke(['tk', 'close', c]); f.invoke(['tk', 'dep', d, a]);
+  const head = f.git('rev-parse', 'HEAD'), index = fs.readFileSync(path.join(f.root, '.git/index'));
+  const compact = { path: 'projects/P', name: 'P', parent: null, status: 'backlog', taskCounts: { open: 2, in_progress: 1, closed: 1, ready: 2 } };
+  expect(f.invoke(['list'], f.root)).toEqual({ version: 1, ok: true, project: null, data: { projects: [compact] } });
+  expect(f.invoke(['list', '--session', 'ses_A'], f.root).data.projects).toEqual([compact]);
+  expect((f.invoke(['list', '--archived', '--session', 'ses_A'], f.root).data.projects as any[]).map(p => p.path)).toEqual(['projects/P', '.archived/P']);
+  const full = f.invoke(['show']).data.project as any;
+  expect(full.tasks.every((t: any) => typeof t.body === 'string')).toBe(true);
+  expect(f.invoke(['context']).data.project).toEqual(full);
+  for (const flag of ['-a', '--all']) {
+    const records = f.invoke(['list', flag], f.root).data.projects as any[];
+    expect(records).toEqual([{ ...full, taskCounts: compact.taskCounts }]);
+    expect(Object.keys(compact).every(key => Object.hasOwn(records[0], key))).toBe(true);
+  }
+  expect((f.invoke(['list', '-a', '--archived'], f.root).data.projects as any[])).toHaveLength(2);
+  const fields = f.invoke(['list', '--fields', 'path,sessions,tasks,notePath,taskCounts'], f.root).data.projects as any[];
+  expect(fields).toEqual([{ path: full.path, sessions: full.sessions, tasks: full.tasks.map(({ body, ...task }: any) => task), notePath: full.notePath, taskCounts: compact.taskCounts }]);
+  expect(f.invoke(['list', '--fields', 'name,parent,status'], f.root).data.projects).toEqual([{ name: 'P', parent: null, status: 'backlog' }]);
+  expect(f.git('rev-parse', 'HEAD')).toBe(head); expect(fs.readFileSync(path.join(f.root, '.git/index'))).toEqual(index); expect(f.git('status', '--porcelain')).toBe('');
+});
+test('list rejects empty, invalid, ambiguous and unknown flags', () => {
+  const f = fixture(); const head = f.git('rev-parse', 'HEAD');
+  for (const args of [
+    ['--fields'], ['--fields', ''], ['--fields', 'path,'], ['--fields', ',path'], ['--fields', 'body'], ['--fields', 'path,unknown'],
+    ['--fields', 'path,path'], ['--fields', '--archived'], ['--fields', '-a'], ['-a', '--fields', 'path'], ['--all', '--fields', 'tasks'],
+    ['--unknown'], ['--archived=true'], ['--all', 'extra'], ['--session'], ['--session', ''], ['--session', '-a'],
+  ]) { const result = f.invoke(['list', ...args], f.root); expect(result.ok).toBe(false); expect(result.write).toBeUndefined(); }
+  expect(f.git('rev-parse', 'HEAD')).toBe(head); expect(f.git('status', '--porcelain')).toBe('');
+});
+test('list excludes archived projects before parsing their malformed task bodies', () => {
+  const f = fixture(); const archived = path.join(f.root, '.archived/P'); fs.mkdirSync(archived, { recursive: true }); expect(f.invoke(['init'], archived).ok).toBe(true);
+  fs.writeFileSync(path.join(archived, '.tickets/broken.md'), '---\nid: broken\nstatus: invalid\n---\nArchived task\n'); f.save('.archived/P/.tickets/broken.md');
+  const head = f.git('rev-parse', 'HEAD');
+  for (const flags of [[], ['-a'], ['--fields', 'tasks'], ['--session', 'ses_A']]) expect(f.invoke(['list', ...flags], f.root).ok).toBe(true);
+  expect(f.invoke(['list', '--archived'], f.root).error?.code).toBe('invalid_task');
+  expect(f.git('rev-parse', 'HEAD')).toBe(head); expect(f.git('status', '--porcelain')).toBe('');
+});
+test('claim conflicts preserve task, HEAD and index; explicit force and same sole owner are supported by native dispatch', () => {
+  const f = fixture(); const id = f.task();
+  for (const sid of ['ses_A', 'ses_B']) f.invoke(['session', 'link', sid]);
+  expect(f.invoke(['tk', 'claim', id, 'ses_A']).ok).toBe(true);
+  const file = path.join(f.project, '.tickets', `${id}.md`);
+  for (const owners of [['ses_A'], ['ses_A', 'ses_B']]) {
+    fs.writeFileSync(file, setField(fs.readFileSync(file, 'utf8'), 'claimed_by_sessions', JSON.stringify(owners)));
+    if (f.git('status', '--porcelain')) f.save(`projects/P/.tickets/${id}.md`);
+    const before = fs.readFileSync(file), head = f.git('rev-parse', 'HEAD'), index = fs.readFileSync(path.join(f.root, '.git/index'));
+    if (owners.length === 1) expect(f.invoke(['tk', 'claim', id, 'ses_A']).write?.state).toBe('unchanged');
+    for (const [executable, args] of [['pj', ['tk', 'claim']], ['tk', ['claim']], ['tk-claim', []]] as const) {
+      const result = f.cli([...args, id, owners.length === 1 ? 'ses_B' : 'ses_A', '--json'], f.project, {}, executable);
+      expect(result.code).toBe(1); expect(result.value).toMatchObject({ ok: false, error: { code: 'claim_conflict', owners, requested: owners.length === 1 ? 'ses_B' : 'ses_A' }, write: { state: 'not_written', paths: [], commit: null } });
+    }
+    expect(fs.readFileSync(file)).toEqual(before); expect(f.git('rev-parse', 'HEAD')).toBe(head); expect(fs.readFileSync(path.join(f.root, '.git/index'))).toEqual(index);
+  }
+  expect(f.cli(['claim', id, 'ses_B', '--force', '--json'], f.project, {}, 'tk').value.data.task.claimed_by_sessions).toEqual(['ses_B']);
+  expect(f.invoke(['tk', 'claim', id, 'ses_A', '--force']).ok).toBe(true);
+  expect(f.invoke(['tk', 'claim', id, 'ses_C', '--force']).error?.code).toBe('session_not_linked');
+  for (const args of [[id, 'ses_A', '--bad'], [id, 'ses_A', '--force', '--force'], [id, '--force']]) expect(f.invoke(['tk', 'claim', ...args]).ok).toBe(false);
+});
+test('close --result appends once and closes in one owned commit, preserving prose, metadata and foreign staging', () => {
+  const f = fixture(); const id = f.task('Result task'), dependent = f.task('Dependent'); f.invoke(['tk', 'dep', dependent, id]);
+  const file = path.join(f.project, '.tickets', `${id}.md`);
+  fs.writeFileSync(file, setField(fs.readFileSync(file, 'utf8'), 'custom', '{ nested: kept }') + '\n- [ ] Existing checklist\n'); f.save(`projects/P/.tickets/${id}.md`);
+  f.invoke(['tk', 'add-note', id, 'Earlier note']);
+  fs.writeFileSync(path.join(f.root, 'foreign'), 'base'); f.save('foreign'); fs.writeFileSync(path.join(f.root, 'foreign'), 'staged'); f.git('add', 'foreign'); fs.appendFileSync(path.join(f.root, 'foreign'), '\nunstaged');
+  f.hook('echo ran >> "$PWD/.git/close-hooks"');
+  const before = fs.readFileSync(file, 'utf8'), note = fs.readFileSync(f.note), count = Number(f.git('rev-list', '--count', 'HEAD'));
+  const result = f.cli(['tk', 'close', id, '--result', 'Verified result\nSecond line', '--json']);
+  expect(result.code).toBe(0); expect(result.value.write.state).toBe('committed'); expect(result.value.write.paths).toEqual([`projects/P/.tickets/${id}.md`]);
+  expect(Number(f.git('rev-list', '--count', 'HEAD'))).toBe(count + 1); expect(fs.readFileSync(path.join(f.root, '.git/close-hooks'), 'utf8')).toBe('ran\n');
+  const after = fs.readFileSync(file, 'utf8'); expect(after).toContain('custom: { nested: kept }'); expect(frontmatter(after).data.status).toBe('closed'); expect(frontmatter(after).body.startsWith(frontmatter(before).body)).toBe(true);
+  expect(after).toMatch(/\*\*\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ\*\*\n\nVerified result\nSecond line\n$/);
+  expect(result.value.data.project.tasks.find((t: any) => t.id === dependent)).toMatchObject({ ready: true, status: 'open' });
+  expect(fs.readFileSync(f.note)).toEqual(note); expect(f.git('show', ':foreign')).toBe('staged'); expect(fs.readFileSync(path.join(f.root, 'foreign'), 'utf8')).toBe('staged\nunstaged');
+  const head = f.git('rev-parse', 'HEAD');
+  expect(f.invoke(['tk', 'close', id, '--result', 'Duplicate']).error?.code).toBe('already_closed'); expect(fs.readFileSync(file, 'utf8')).toBe(after); expect(f.git('rev-parse', 'HEAD')).toBe(head);
+  expect(f.invoke(['tk', 'close', id]).write?.state).toBe('unchanged');
+});
+test.each(['exit', 'prefix', 'empty', 'close'])('failed close result planning (%s) leaves status and all real bytes unchanged', failure => {
+  const f = fixture(); const id = f.task(); const file = path.join(f.project, '.tickets', `${id}.md`);
+  const before = fs.readFileSync(file), head = f.git('rev-parse', 'HEAD'), index = fs.readFileSync(path.join(f.root, '.git/index'));
+  const original = childProcess.spawnSync; let appendCalls = 0;
+  const mocked = spyOn(childProcess, 'spawnSync').mockImplementation(((command: string, args: string[], options: any) => {
+    if (failure === 'close' && args?.[1] === 'super' && args[2] === 'close') return { status: 1, stderr: 'Injected close failure', stdout: '' };
+    if (args?.[1] === 'super' && args[2] === 'add-note') {
+      appendCalls++;
+      if (failure === 'exit') return { status: 1, stderr: 'Injected append failure', stdout: '' };
+      if (failure === 'empty') return { status: 0, stderr: '', stdout: '' };
+      const result = original(command, args, options); if (failure === 'prefix') fs.writeFileSync(path.join(options.env.TICKETS_DIR, `${id}.md`), 'corrupt prefix\n'); return result;
+    }
+    return original(command, args, options);
+  }) as typeof childProcess.spawnSync);
+  let result; try { result = f.invoke(['tk', 'close', id, '--result', 'Verified']); } finally { mocked.mockRestore(); }
+  expect(appendCalls).toBe(1); expect(result!.ok).toBe(false); expect(result!.write?.state).toBe('not_written'); expect(result!.error?.code).toBe(failure === 'exit' || failure === 'close' ? 'tk_failed' : 'verification_failed');
+  expect(fs.readFileSync(file)).toEqual(before); expect(frontmatter(before.toString()).data.status).toBe('open'); expect(f.git('rev-parse', 'HEAD')).toBe(head); expect(fs.readFileSync(path.join(f.root, '.git/index'))).toEqual(index);
+});
+test('close rejects missing/empty/unknown results and dirty targets before saving', () => {
+  const f = fixture(); const id = f.task(); const file = path.join(f.project, '.tickets', `${id}.md`), before = fs.readFileSync(file), head = f.git('rev-parse', 'HEAD');
+  for (const args of [['--result'], ['--result', ''], ['--result', '  \n'], ['--result', '--bad'], ['--result', 'x', '--result', 'y'], ['--unknown'], ['--result', 'x', 'extra']]) expect(f.invoke(['tk', 'close', id, ...args])).toMatchObject({ ok: false, write: { state: 'not_written' } });
+  expect(fs.readFileSync(file)).toEqual(before); expect(f.git('rev-parse', 'HEAD')).toBe(head);
+  fs.appendFileSync(file, '\nUser edit\n'); const dirty = fs.readFileSync(file); expect(f.invoke(['tk', 'close', id, '--result', 'Verified']).error?.code).toBe('dirty_target'); expect(fs.readFileSync(file)).toEqual(dirty);
 });
