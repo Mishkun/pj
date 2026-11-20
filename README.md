@@ -139,6 +139,19 @@ Discovery is bounded to the two convention directories and skips symlinks and te
 
 Write states are `committed`, `saved`, `not_written`, `saved_uncommitted`, `unchanged` and `unknown`. `saved` means verified file-only success with `commit:null`; it is not a pending commit. Responses include completed checks. A failed Git commit returns `commit_failed`, `saved_uncommitted`, saved paths and `commit:null`. An unexpected HEAD/tree/index/hook outcome returns `unknown` with `commit:null`. Inspect saved files and, in Git mode, repository state explicitly before deciding a recovery action.
 
+### Project lifecycle notification
+
+Register executables from anywhere inside a workspace:
+
+```sh
+pj hook add post-init /absolute/path/to/notify
+pj hook add post-move /absolute/path/to/notify
+pj hook list
+pj hook remove post-init /absolute/path/to/notify
+```
+
+Each registration belongs to this user and workspace; cloning a workspace does not enable its hooks. An event can have several executables. Add/remove are idempotent. Register only trusted programs. After a verified project `init` (including adoption) or `move`, pj releases its locks and invokes subscribed executables in registration order from the workspace root with three arguments: event, new project path, and previous path (empty for init). No-op, failed or uncertain writes, `init --workspace`, and unrelated commands do not notify. Git and standalone storage use the same contract. Each executable has three seconds to queue follow-up work. `data.hooks` reports individual delivery outcomes; a failed handler does not undo the project or suppress later handlers. `data.hookError` reports a registry read failure separately from the verified write result.
+
 Post-write cleanup failures return `cleanup_failed` and `unknown`, retaining saved paths and any already verified commit. The response includes cleanup errors so a retained lock can be inspected explicitly. Cleanup errors never turn a completed write into `not_written`.
 
 Consumers, including plugins, invoke the CLI for project links. Library exports in `src/index.ts` provide types and a programmatic runner for local tests; README parsing stays owned by pj.

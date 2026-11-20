@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import { manageHooks, notifyProjectChange } from './hooks.ts';
 import path from 'node:path';
 import { bytes, fileBytes, mutate, vault, type Envelope, type Plan } from './git.ts';
 import { discover, frontmatter, inConvention, isProject, materials, namedLink, nearest, PJError, projectStatuses, rel, requireValue, safePath, sessions, setField, setSessions, sid, snapshot, taskFile, within, type ProjectSnapshot } from './model.ts';
@@ -8,7 +9,7 @@ import { boundary, marker, markerBytes } from './workspace.ts';
 import { mutateFiles } from './files.ts';
 
 const listUsage = 'pj list [--session SID] [--archived] [-a | --all | --fields FIELD,...]';
-const usage = `pj init --workspace | init [--adopt] | root | show | ${listUsage.slice(3)} | context | session link/unlink SID [--title TITLE] | session fork SOURCE TARGET [--title TITLE] | status VALUE | tk claim TASK_ID SESSION_ID [--force] | tk close TASK_ID [--result TEXT] | tk OP ... | log TEXT [--session SID] | move DESTINATION`;
+const usage = `pj init --workspace | init [--adopt] | root | show | ${listUsage.slice(3)} | context | hook list [EVENT] | hook add/remove EVENT EXECUTABLE | session link/unlink SID [--title TITLE] | session fork SOURCE TARGET [--title TITLE] | status VALUE | tk claim TASK_ID SESSION_ID [--force] | tk close TASK_ID [--result TEXT] | tk OP ... | log TEXT [--session SID] | move DESTINATION`;
 const listFields = ['path', 'name', 'parent', 'status', 'taskCounts', 'sessions', 'notePath', 'tasks'] as const;
 type ListField = typeof listFields[number];
 function taskCounts(project: ProjectSnapshot) {
@@ -98,6 +99,7 @@ export function run(argv: string[], cwd = process.cwd()): Envelope {
     }
     const root = vault(cwd); safePath(root, cwd);
     const success = (data: Record<string, unknown>): Envelope => ({ version: 1, ok: true, project, data });
+    if (command === 'hook') return success(manageHooks(root, cwd, args));
     if (command === 'root') {
       requireValue(args.length === 0, 'usage', 'pj root');
       return success({ root, storage: boundary(root)?.files ? 'files' : 'git' });
@@ -134,7 +136,7 @@ export function run(argv: string[], cwd = process.cwd()): Envelope {
       requireValue(args.length === 0 && projectStatuses.includes(status), 'usage', usage);
       requireValue(inConvention(root, cwd), 'scope', 'Initialize a project folder under projects/ or .archived/');
       project = rel(root, cwd);
-      return mutate(root, project, `pj: initialize ${project}`, () => {
+      const result = mutate(root, project, `pj: initialize ${project}`, () => {
         const note = path.join(cwd, 'README.md'); safePath(root, note);
         const previous = fileBytes(note);
         requireValue(!previous || adopt || isProject(root, note), 'adoption_required', 'Existing README requires pj init --adopt');
@@ -144,12 +146,13 @@ export function run(argv: string[], cwd = process.cwd()): Envelope {
           const fm = frontmatter(next);
           if (!Object.hasOwn(fm.data, 'status')) next = setField(next, 'status', status);
           if (!Object.hasOwn(fm.data, 'opencode_sessions')) next = setField(next, 'opencode_sessions', '[]');
-        } else next = `---\nstatus: ${status}\nopencode_sessions: []\n---\n${next ? '\n' + next : ''}`;
+        } else next = `---\ntype: project\ntitle: ${JSON.stringify(path.basename(cwd))}\nstatus: ${status}\nareas: []\nopencode_sessions: []\nupdated: ${new Date().toISOString().slice(0, 10)}\n---\n${next ? '\n' + next : ''}`;
         const keep = path.join(cwd, '.tickets', '.gitkeep'); safePath(root, keep);
         const files = new Map<string, Buffer | null>([[note, bytes(next)]]);
         if (!fs.existsSync(path.dirname(keep))) files.set(keep, bytes(''));
         return { files, after: () => ({ project: snapshot(root, cwd) }) };
       });
+      return notifyProjectChange(root, 'post-init', result);
     }
     const current = nearest(root, cwd); project = rel(root, current);
     if (command === 'show' || command === 'context') {
@@ -190,7 +193,8 @@ export function run(argv: string[], cwd = process.cwd()): Envelope {
     if (command === 'move') {
       isMutation = true; requireValue(args.length === 1, 'usage', 'pj move VAULT_RELATIVE_DESTINATION');
       const result = mutate(root, project, `pj: move ${project} → ${args[0]}`, () => movePlan(root, current, args[0]!));
-      if (result.ok) result.project = rel(root, path.resolve(root, args[0]!)); return result;
+      if (result.ok) result.project = rel(root, path.resolve(root, args[0]!));
+      return notifyProjectChange(root, 'post-move', result);
     }
     if (command === 'tk' || command === '_claim') {
       isMutation = command === '_claim' || !isTaskReadOperation(args[0]);
