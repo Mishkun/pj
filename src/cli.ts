@@ -4,9 +4,11 @@ import { bytes, fileBytes, mutate, vault, type Envelope, type Plan } from './git
 import { discover, frontmatter, inConvention, isProject, materials, namedLink, nearest, PJError, projectStatuses, rel, requireValue, safePath, sessions, setField, setSessions, sid, snapshot, taskFile, within, type ProjectSnapshot } from './model.ts';
 import { planTask } from './tasks.ts';
 import { rewriteMarkdownLinks } from './markdown.ts';
+import { boundary, marker, markerBytes } from './workspace.ts';
+import { mutateFiles } from './files.ts';
 
 const listUsage = 'pj list [--session SID] [--archived] [-a | --all | --fields FIELD,...]';
-const usage = `pj init [--adopt] | show | ${listUsage.slice(3)} | context | session link/unlink SID [--title TITLE] | session fork SOURCE TARGET [--title TITLE] | status VALUE | tk claim TASK_ID SESSION_ID [--force] | tk close TASK_ID [--result TEXT] | tk OP ... | log TEXT [--session SID] | move DESTINATION`;
+const usage = `pj init --workspace | init [--adopt] | root | show | ${listUsage.slice(3)} | context | session link/unlink SID [--title TITLE] | session fork SOURCE TARGET [--title TITLE] | status VALUE | tk claim TASK_ID SESSION_ID [--force] | tk close TASK_ID [--result TEXT] | tk OP ... | log TEXT [--session SID] | move DESTINATION`;
 const listFields = ['path', 'name', 'parent', 'status', 'taskCounts', 'sessions', 'notePath', 'tasks'] as const;
 type ListField = typeof listFields[number];
 function taskCounts(project: ProjectSnapshot) {
@@ -47,7 +49,7 @@ function movePlan(root: string, project: string, destination: string): Plan {
   const walk = (dir: string) => {
     for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
       const file = path.join(dir, entry.name); safePath(root, file);
-      requireValue(!entry.isSymbolicLink() && !['.git', 'node_modules'].includes(entry.name), 'unsafe_move', 'Move contains a symlink or technical directory');
+      requireValue(!entry.isSymbolicLink() && !['.git', '.pj', marker, 'node_modules'].includes(entry.name), 'unsafe_move', 'Move contains a symlink, nested workspace or technical directory');
       if (entry.isDirectory()) walk(file); else { requireValue(entry.isFile(), 'unsafe_move', 'Move contains a special file'); sources.push(file); }
     }
   }; walk(project);
@@ -85,8 +87,21 @@ export function run(argv: string[], cwd = process.cwd()): Envelope {
     if (!command || ['help', '--help', '-h'].includes(command)) return { version: 1, ok: true, project, data: { usage } };
     isMutation = ['init', 'status', 'session', 'log', 'move', '_claim'].includes(command)
       || (command === 'tk' && !isTaskReadOperation(args[0]));
+    if (command === 'init' && booleanFlag(args, '--workspace')) {
+      requireValue(args.length === 0, 'usage', 'pj init --workspace');
+      const root = fs.realpathSync(cwd), existing = boundary(root);
+      requireValue(!existing || (existing.files && existing.root === root), 'scope', 'Cannot initialize a workspace inside an existing workspace or Git repository');
+      return mutateFiles(root, null, () => ({
+        files: new Map([[path.join(root, marker), fileBytes(path.join(root, marker)) ?? bytes(markerBytes)]]),
+        data: { root, storage: 'files' },
+      }), true);
+    }
     const root = vault(cwd); safePath(root, cwd);
     const success = (data: Record<string, unknown>): Envelope => ({ version: 1, ok: true, project, data });
+    if (command === 'root') {
+      requireValue(args.length === 0, 'usage', 'pj root');
+      return success({ root, storage: boundary(root)?.files ? 'files' : 'git' });
+    }
     if (command === 'list') {
       const filter = flag(args, '--session'); if (filter !== undefined) sid(filter);
       const archived = booleanFlag(args, '--archived'), all = booleanFlag(args, '-a') || booleanFlag(args, '--all');

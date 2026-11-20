@@ -2,8 +2,10 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { discover, PJError, rel, requireValue, safePath, within } from './model.ts';
+import { boundary, standalone } from './workspace.ts';
+import { mutateFiles } from './files.ts';
 
-export type Write = { state: 'committed' | 'not_written' | 'saved_uncommitted' | 'unchanged' | 'unknown'; paths: string[]; commit: string | null; checks?: string[]; checkErrors?: string[] };
+export type Write = { state: 'committed' | 'saved' | 'not_written' | 'saved_uncommitted' | 'unchanged' | 'unknown'; paths: string[]; commit: string | null; checks?: string[]; checkErrors?: string[] };
 export type Envelope = { version: 1; ok: boolean; project: string | null; data: Record<string, unknown>; write?: Write; error?: { code: string; message: string; [key: string]: unknown } };
 export function cleanEnv(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
   const env = { ...process.env };
@@ -17,9 +19,12 @@ export function git(root: string, args: string[], options: { env?: NodeJS.Proces
   return result;
 }
 export function vault(cwd: string): string {
+  const workspace = boundary(cwd);
+  if (workspace?.files) return workspace.root;
   const result = git(cwd, ['rev-parse', '--show-toplevel'], { allowFailure: true });
   requireValue(result.status === 0, 'scope', 'This command requires a Git-vault');
   const root = fs.realpathSync(result.stdout.trim());
+  requireValue(!workspace || workspace.root === root, 'scope', 'Git resolved outside the nearest repository boundary');
   requireValue(within(root, fs.realpathSync(cwd)), 'scope', 'Working directory escapes Git-vault');
   return root;
 }
@@ -39,6 +44,7 @@ function errorEnvelope(project: string | null, write: Write, error: unknown, dat
 }
 /** Cooperating writers serialize here. Native Git hooks run once with an isolated command-owned index. */
 export function mutate(root: string, project: string | null, description: string, planner: (scratch: string) => Plan): Envelope {
+  if (standalone(root)) return mutateFiles(root, project, planner);
   const write: Write = { state: 'not_written', paths: [], commit: null, checks: [] };
   let lock: string | undefined, indexLock: string | undefined, scratch: string | undefined;
   let repoOwned = false, indexOwned = false, attemptedSave = false, attemptedCommit = false;

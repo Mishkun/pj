@@ -24,7 +24,7 @@ export function sid(value: string | undefined): string {
   return value;
 }
 export function safePath(root: string, file: string): void {
-  requireValue(within(root, file), 'scope', 'Path escapes Git-vault');
+  requireValue(within(root, file), 'scope', 'Path escapes workspace');
   let cursor = root;
   for (const segment of path.relative(root, file).split(path.sep).filter(Boolean)) {
     cursor = path.join(cursor, segment);

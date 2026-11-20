@@ -87,6 +87,9 @@ test('discovery excludes technical directories and symlink escapes; symlink cwd 
   }
   expect((f.invoke(['list'], f.root).data.projects as any[]).map(p => p.path)).toEqual(['projects/P']);
   expect(f.invoke(['show'], path.join(f.project, 'escape')).ok).toBe(false);
+  // The fake nested .git is an explicit (broken) boundary, not a fallback to the parent Git-vault.
+  expect(f.invoke(['context']).error?.code).toBe('scope');
+  fs.rmSync(path.join(f.project, '.git'), { recursive: true });
   expect(f.invoke(['context']).data.materials).toEqual([]);
 });
 test('unknown metadata, comments, prose and quoted state survive status changes and unchanged calls', () => {
